@@ -11,16 +11,35 @@ import {
   Globe,
   Route,
   FastForward,
+  Map as MapIcon,
+  Loader2,
   Rewind
 } from 'lucide-react';
 import { 
   generateGraph, 
+  fetchOSMGraph,
   runDijkstra, 
   runNewSSSP, 
   type Graph, 
   type AlgorithmResult,
   type TopologyType
 } from './lib/graph';
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+
+function MapController({ setMap, onMove }: { setMap: (m: any) => void; onMove: () => void }) {
+  const map = useMap();
+  useEffect(() => {
+    setMap(map);
+    return () => setMap(null);
+  }, [map, setMap]);
+
+  useMapEvents({
+    move: onMove,
+    zoom: onMove,
+  });
+
+  return null;
+}
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -39,6 +58,14 @@ export default function App() {
   const [snapshotIdx, setSnapshotIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(40);
+  const [isLoadingMap, setIsLoadingMap] = useState(false);
+  
+  const [mapInstance, setMapInstance] = useState<any>(null);
+  const [mapTrigger, setMapTrigger] = useState(0);
+
+  const handleMapMove = () => {
+    setMapTrigger(v => v + 1);
+  };
 
   const [hudPos, setHudPos] = useState<'br' | 'bl' | 'tr' | 'tl'>('br');
 
@@ -98,23 +125,46 @@ export default function App() {
     }
   }, [dimensions.width, dimensions.height]);
 
-  const handleGenerateGraph = (t: TopologyType) => {
+  const handleGenerateGraph = async (t: TopologyType) => {
     setTopology(t);
     setIsPlaying(false);
     setCurrentResult(null);
     setSnapshotIdx(0);
-    const newGraph = generateGraph(dimensions.width, dimensions.height, t === 'random' ? 200 : 800, t);
-    setGraph(newGraph);
-    
-    // Auto-select far separated start and end nodes
-    let nodeVals = Object.values(newGraph.nodes);
-    if(nodeVals.length > 2) {
-      const start = [...nodeVals].sort((a,b) => (a.x + a.y) - (b.x + b.y))[0].id;
-      const end = [...nodeVals].sort((a,b) => (b.x + b.y) - (a.x + a.y))[0].id;
-      setStartNode(start);
-      setEndNode(end);
-    }
     setMode('idle');
+    
+    if (t === 'osm') {
+      setIsLoadingMap(true);
+      try {
+        const bbox = { s: 40.768, w: -73.98, n: 40.78, e: -73.96 };
+        const newGraph = await fetchOSMGraph(bbox, dimensions.width, dimensions.height);
+        
+        // Auto-select far separated start and end nodes
+        let nodeVals = Object.values(newGraph.nodes);
+        if(nodeVals.length > 2) {
+          const start = [...nodeVals].sort((a,b) => (a.x + a.y) - (b.x + b.y))[0].id;
+          const end = [...nodeVals].sort((a,b) => (b.x + b.y) - (a.x + a.y))[0].id;
+          setStartNode(start);
+          setEndNode(end);
+        }
+        setGraph(newGraph);
+      } catch (err) {
+        console.error("Failed to load map topology:", err);
+      } finally {
+        setIsLoadingMap(false);
+      }
+    } else {
+      const newGraph = generateGraph(dimensions.width, dimensions.height, t === 'random' ? 200 : 800, t);
+      setGraph(newGraph);
+      
+      // Auto-select far separated start and end nodes
+      let nodeVals = Object.values(newGraph.nodes);
+      if(nodeVals.length > 2) {
+        const start = [...nodeVals].sort((a,b) => (a.x + a.y) - (b.x + b.y))[0].id;
+        const end = [...nodeVals].sort((a,b) => (b.x + b.y) - (a.x + a.y))[0].id;
+        setStartNode(start);
+        setEndNode(end);
+      }
+    }
   };
 
   const runAlgorithm = (type: 'dijkstra' | 'new-sssp') => {
@@ -167,7 +217,14 @@ export default function App() {
     let minDist = 20; // Tolerance radius
     
     Object.values(graph.nodes).forEach((node: any) => {
-      const dist = Math.hypot(node.x - x, node.y - y);
+      let nx = node.x;
+      let ny = node.y;
+      if (topology === 'osm' && mapInstance && node.lat && node.lng) {
+        const pt = mapInstance.latLngToContainerPoint([node.lat, node.lng]);
+        nx = pt.x;
+        ny = pt.y;
+      }
+      const dist = Math.hypot(nx - x, ny - y);
       if (dist < minDist) {
         minDist = dist;
         closestNode = node.id;
@@ -197,6 +254,14 @@ export default function App() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    const getNodePos = (node: any) => {
+      if (topology === 'osm' && mapInstance && node.lat && node.lng) {
+        const pt = mapInstance.latLngToContainerPoint([node.lat, node.lng]);
+        return { x: pt.x, y: pt.y };
+      }
+      return { x: node.x, y: node.y };
+    };
+
     // Theme Colors
     const isDijkstra = !activeAlgoName || activeAlgoName.includes('Dijkstra');
     const primaryColor = isDijkstra ? '#22d3ee' : '#d946ef'; // cyan or fuchsia
@@ -213,8 +278,10 @@ export default function App() {
         if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
         const pairKey = [e.from, e.to].sort().join('-');
         if (!drawnPairs.has(pairKey)) {
-          ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
-          ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
+          const fromPos = getNodePos(graph.nodes[e.from]);
+          const toPos = getNodePos(graph.nodes[e.to]);
+          ctx.moveTo(fromPos.x, fromPos.y);
+          ctx.lineTo(toPos.x, toPos.y);
           drawnPairs.add(pairKey);
         }
       });
@@ -245,8 +312,10 @@ export default function App() {
         edgeList.forEach((e: any) => {
           if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
           if (visitedSet.has(e.from) && visitedSet.has(e.to)) {
-            ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
-            ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
+            const fromPos = getNodePos(graph.nodes[e.from]);
+            const toPos = getNodePos(graph.nodes[e.to]);
+            ctx.moveTo(fromPos.x, fromPos.y);
+            ctx.lineTo(toPos.x, toPos.y);
           }
         });
       });
@@ -259,8 +328,10 @@ export default function App() {
         ctx.beginPath();
         snapshot.activeEdges.forEach(e => {
           if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
-          ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
-          ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
+          const fromPos = getNodePos(graph.nodes[e.from]);
+          const toPos = getNodePos(graph.nodes[e.to]);
+          ctx.moveTo(fromPos.x, fromPos.y);
+          ctx.lineTo(toPos.x, toPos.y);
         });
         ctx.stroke();
       }
@@ -278,8 +349,10 @@ export default function App() {
       
       currentResult.finalPath.forEach(e => {
         if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
-        ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
-        ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
+        const fromPos = getNodePos(graph.nodes[e.from]);
+        const toPos = getNodePos(graph.nodes[e.to]);
+        ctx.moveTo(fromPos.x, fromPos.y);
+        ctx.lineTo(toPos.x, toPos.y);
       });
       ctx.stroke();
       
@@ -289,6 +362,10 @@ export default function App() {
 
     // 4. Draw Nodes
     Object.values(graph.nodes).forEach((node: any) => {
+      const pos = getNodePos(node);
+      // Perf check: skip clipping nodes that are outside canvas area entirely
+      if (pos.x < -20 || pos.x > canvas.width + 20 || pos.y < -20 || pos.y > canvas.height + 20) return;
+
       let fillColor = 'rgba(255, 255, 255, 0.1)';
       let radius = 2;
 
@@ -313,11 +390,11 @@ export default function App() {
 
       ctx.fillStyle = fillColor;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
       ctx.fill();
     });
 
-  }, [graph, dimensions, currentResult, snapshotIdx, startNode, endNode]);
+  }, [graph, dimensions, currentResult, snapshotIdx, startNode, endNode, topology, mapInstance, mapTrigger]);
 
   return (
     <div className="bg-[#08080a] text-slate-200 h-screen w-full flex overflow-hidden font-sans select-none border-4 border-[#1a1a20]">
@@ -345,36 +422,51 @@ export default function App() {
               </button>
             </div>
             
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => handleGenerateGraph('random')}
+                disabled={isLoadingMap}
                 className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
                   topology === 'random' 
                   ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
                   : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
-                }`}
+                } disabled:opacity-50`}
               >
                 <Globe className="w-4 h-4 mb-1" /> Mesh
               </button>
               <button
                 onClick={() => handleGenerateGraph('grid')}
+                disabled={isLoadingMap}
                 className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
                   topology === 'grid' 
                   ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
                   : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
-                }`}
+                } disabled:opacity-50`}
               >
                 <Grid3X3 className="w-4 h-4 mb-1" /> Grid
               </button>
               <button
                 onClick={() => handleGenerateGraph('maze')}
+                disabled={isLoadingMap}
                 className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
                   topology === 'maze' 
                   ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
                   : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
-                }`}
+                } disabled:opacity-50`}
               >
                 <Route className="w-4 h-4 mb-1" /> Maze
+              </button>
+              <button
+                onClick={() => handleGenerateGraph('osm')}
+                disabled={isLoadingMap}
+                className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                  topology === 'osm' 
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]' 
+                  : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                } disabled:opacity-50`}
+              >
+                {isLoadingMap ? <Loader2 className="w-4 h-4 mb-1 animate-spin" /> : <MapIcon className="w-4 h-4 mb-1" />}
+                Real Map
               </button>
             </div>
           </div>
@@ -516,15 +608,39 @@ export default function App() {
         ref={containerRef} 
         className={`flex-1 relative bg-[radial-gradient(circle_at_center,_#12121a_0%,_#08080a_100%)] ${mode !== 'idle' ? 'cursor-crosshair' : ''}`}
       >
+        {topology === 'osm' && (
+          <div className={`absolute inset-0 z-0 opacity-40 overflow-hidden ${isPlaying ? 'pointer-events-none' : ''}`} style={{ filter: 'grayscale(100%) contrast(1.2)' }}>
+            <MapContainer 
+              bounds={[[40.768, -73.98], [40.78, -73.96]]} 
+              zoomControl={false}
+              minZoom={12}
+              maxZoom={17}
+              scrollWheelZoom={true}
+              dragging={true}
+              touchZoom={true}
+              doubleClickZoom={true}
+              boxZoom={false}
+              keyboard={false}
+              style={{ width: '100%', height: '100%' }}
+            >
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution='&copy; OpenStreetMap contributors &copy; CARTO'
+              />
+              <MapController setMap={setMapInstance} onMove={handleMapMove} />
+            </MapContainer>
+          </div>
+        )}
+
         {/* Graph Mesh (CSS Grid Overlay) */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#22d3ee 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+        <div className="absolute inset-0 opacity-10 pointer-events-none z-1" style={{ backgroundImage: 'radial-gradient(#22d3ee 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
         
         <canvas
           ref={canvasRef}
           width={dimensions.width}
           height={dimensions.height}
           onClick={handleCanvasClick}
-          className="absolute inset-0 max-w-full max-h-full touch-none"
+          className={`absolute inset-0 max-w-full max-h-full touch-none z-10 ${mode !== 'idle' || isPlaying ? 'pointer-events-auto' : 'pointer-events-none'}`}
         />
         
         {/* Helper overlay when empty */}

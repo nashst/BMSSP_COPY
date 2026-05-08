@@ -6,6 +6,8 @@ export type Node = {
   id: string;
   x: number;
   y: number;
+  lat?: number;
+  lng?: number;
 };
 
 export type Edge = {
@@ -36,7 +38,7 @@ export type AlgorithmResult = {
   };
 };
 
-export type TopologyType = 'random' | 'grid' | 'maze';
+export type TopologyType = 'random' | 'grid' | 'maze' | 'osm';
 
 export function generateGraph(width: number, height: number, numNodes: number = 200, topology: TopologyType = 'random'): Graph {
   const nodes: Record<string, Node> = {};
@@ -363,3 +365,99 @@ export function runNewSSSP(graph: Graph, start: string, end: string): AlgorithmR
     stats: { steps, visitedCount: visited.size, timeMs }
   };
 }
+
+export type BoundingBox = {
+  s: number;
+  w: number;
+  n: number;
+  e: number;
+};
+
+export async function fetchOSMGraph(bbox: BoundingBox, width: number, height: number): Promise<Graph> {
+  const query = `
+    [out:json][timeout:25];
+    (
+      way["highway"]["highway"!="footway"]["highway"!="pedestrian"]["highway"!="path"]["highway"!="steps"](${bbox.s},${bbox.w},${bbox.n},${bbox.e});
+    );
+    (._;>;);
+    out body;
+  `;
+  const response = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: query,
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch map data");
+  }
+
+  const data = await response.json();
+  
+  const nodes: Record<string, Node> = {};
+  const edges: Record<string, Edge[]> = {};
+
+  const mapLeft = bbox.w;
+  const mapRight = bbox.e;
+  const mapTop = bbox.n;
+  const mapBottom = bbox.s;
+
+  const dx = mapRight - mapLeft;
+  const dy = mapTop - mapBottom;
+
+  data.elements.forEach((el: any) => {
+    if (el.type === "node") {
+      const px = ((el.lon - mapLeft) / dx) * width;
+      const py = height - ((el.lat - mapBottom) / dy) * height;
+
+      nodes[el.id] = {
+        id: el.id.toString(),
+        x: px,
+        y: py,
+        lat: el.lat,
+        lng: el.lon,
+      };
+      edges[el.id.toString()] = [];
+    }
+  });
+
+  data.elements.forEach((el: any) => {
+    if (el.type === "way" && el.nodes) {
+      for (let i = 0; i < el.nodes.length - 1; i++) {
+        const uId = el.nodes[i].toString();
+        const vId = el.nodes[i + 1].toString();
+
+        const u = nodes[uId];
+        const v = nodes[vId];
+
+        if (u && v) {
+          const R = 6371e3;
+          const phi1 = u.lat! * Math.PI/180;
+          const phi2 = v.lat! * Math.PI/180;
+          const dPhi = (v.lat! - u.lat!) * Math.PI/180;
+          const dLam = (v.lng! - u.lng!) * Math.PI/180;
+
+          const a = Math.sin(dPhi/2) * Math.sin(dPhi/2) +
+                    Math.cos(phi1) * Math.cos(phi2) *
+                    Math.sin(dLam/2) * Math.sin(dLam/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = R * c;
+
+          edges[uId].push({ from: uId, to: vId, weight: Math.max(1, distance) });
+          edges[vId].push({ from: vId, to: uId, weight: Math.max(1, distance) });
+        }
+      }
+    }
+  });
+
+  const prunedNodes: Record<string, Node> = {};
+  for (const id in nodes) {
+    if (edges[id] && edges[id].length > 0) {
+      prunedNodes[id] = nodes[id];
+    } else {
+      delete edges[id];
+    }
+  }
+
+  return { nodes: prunedNodes, edges };
+}
+
