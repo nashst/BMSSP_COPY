@@ -366,6 +366,316 @@ export function runNewSSSP(graph: Graph, start: string, end: string): AlgorithmR
   };
 }
 
+export function runAStar(graph: Graph, start: string, end: string): AlgorithmResult {
+  const startT = performance.now();
+  const distances: Record<string, number> = {};
+  const prev: Record<string, Edge | null> = {};
+  const visited = new Set<string>();
+  const snapshots: Snapshot[] = [];
+
+  Object.keys(graph.nodes).forEach(id => (distances[id] = Infinity));
+  distances[start] = 0;
+  prev[start] = null;
+
+  const queue = new Set<string>([start]);
+  let steps = 0;
+
+  const heuristic = (id: string) => {
+    const u = graph.nodes[id];
+    const v = graph.nodes[end];
+    if (!u || !v) return 0;
+    return Math.hypot(u.x - v.x, u.y - v.y);
+  };
+
+  while (queue.size > 0) {
+    let u: string | null = null;
+    let minF = Infinity;
+
+    for (const id of queue) {
+      const f = distances[id] + heuristic(id);
+      if (f < minF) {
+        minF = f;
+        u = id;
+      }
+    }
+
+    if (u === null || minF === Infinity) break;
+    
+    queue.delete(u);
+    visited.add(u);
+    steps++;
+
+    if (u === end) {
+      snapshots.push({
+        frontier: [u],
+        visited: Array.from(visited),
+        activeEdges: [],
+        distances: { ...distances }
+      });
+      break; 
+    }
+
+    const activeEdges: Edge[] = [];
+    for (const e of graph.edges[u]) {
+      const v = e.to;
+      if (visited.has(v)) continue;
+      
+      activeEdges.push(e);
+      const alt = distances[u] + e.weight;
+      if (alt < distances[v]) {
+        distances[v] = alt;
+        prev[v] = e;
+        queue.add(v);
+      }
+    }
+
+    snapshots.push({
+      frontier: [u],
+      visited: Array.from(visited),
+      activeEdges,
+      distances: { ...distances }
+    });
+  }
+
+  const finalPath: Edge[] = [];
+  let curr = end;
+  while (curr !== start && prev[curr]) {
+    finalPath.push(prev[curr]!);
+    curr = prev[curr]!.from;
+  }
+
+  const timeMs = performance.now() - startT;
+
+  return {
+    snapshots,
+    finalPath: finalPath.reverse(),
+    stats: { steps, visitedCount: visited.size, timeMs }
+  };
+}
+
+export function runBFS(graph: Graph, start: string, end: string): AlgorithmResult {
+  const startT = performance.now();
+  const distances: Record<string, number> = {};
+  const prev: Record<string, Edge | null> = {};
+  const visited = new Set<string>();
+  const snapshots: Snapshot[] = [];
+
+  Object.keys(graph.nodes).forEach(id => (distances[id] = Infinity));
+  distances[start] = 0;
+  prev[start] = null;
+
+  const queue: string[] = [start];
+  const enqueued = new Set<string>([start]);
+  let steps = 0;
+
+  while (queue.length > 0) {
+    const u = queue.shift()!;
+    visited.add(u);
+    steps++;
+
+    if (u === end) {
+      snapshots.push({
+        frontier: [u],
+        visited: Array.from(visited),
+        activeEdges: [],
+        distances: { ...distances }
+      });
+      break;
+    }
+
+    const activeEdges: Edge[] = [];
+    for (const e of graph.edges[u]) {
+      const v = e.to;
+      if (visited.has(v)) continue;
+      
+      activeEdges.push(e);
+      
+      if (!enqueued.has(v)) {
+        distances[v] = distances[u] + 1; // Unweighted distance
+        prev[v] = e;
+        enqueued.add(v);
+        queue.push(v);
+      }
+    }
+
+    snapshots.push({
+      frontier: [u],
+      visited: Array.from(visited),
+      activeEdges,
+      distances: { ...distances }
+    });
+  }
+
+  const finalPath: Edge[] = [];
+  let curr = end;
+  while (curr !== start && prev[curr]) {
+    finalPath.push(prev[curr]!);
+    curr = prev[curr]!.from;
+  }
+
+  const timeMs = performance.now() - startT;
+
+  return {
+    snapshots,
+    finalPath: finalPath.reverse(),
+    stats: { steps, visitedCount: visited.size, timeMs }
+  };
+}
+
+export function runGBFS(graph: Graph, start: string, end: string): AlgorithmResult {
+  const startT = performance.now();
+  const distances: Record<string, number> = {};
+  const prev: Record<string, Edge | null> = {};
+  const visited = new Set<string>();
+  const snapshots: Snapshot[] = [];
+
+  Object.keys(graph.nodes).forEach(id => (distances[id] = Infinity));
+  distances[start] = 0;
+  prev[start] = null;
+
+  const queue = new Set<string>([start]);
+  let steps = 0;
+
+  const heuristic = (id: string) => {
+    const u = graph.nodes[id];
+    const v = graph.nodes[end];
+    if (!u || !v) return 0;
+    return Math.hypot(u.x - v.x, u.y - v.y);
+  };
+
+  while (queue.size > 0) {
+    let u: string | null = null;
+    let minH = Infinity;
+
+    for (const id of queue) {
+      const h = heuristic(id);
+      if (h < minH) {
+        minH = h;
+        u = id;
+      }
+    }
+
+    if (u === null || minH === Infinity) break;
+    
+    queue.delete(u);
+    visited.add(u);
+    steps++;
+
+    if (u === end) {
+      snapshots.push({
+        frontier: [u],
+        visited: Array.from(visited),
+        activeEdges: [],
+        distances: { ...distances }
+      });
+      break; 
+    }
+
+    const activeEdges: Edge[] = [];
+    for (const e of graph.edges[u]) {
+      const v = e.to;
+      if (visited.has(v)) continue;
+      
+      activeEdges.push(e);
+      if (distances[u] + e.weight < distances[v]) {
+         distances[v] = distances[u] + e.weight;
+      }
+      if (!prev[v]) {
+        prev[v] = e;
+        queue.add(v);
+      }
+    }
+
+    snapshots.push({
+      frontier: [u],
+      visited: Array.from(visited),
+      activeEdges,
+      distances: { ...distances }
+    });
+  }
+
+  const finalPath: Edge[] = [];
+  let curr = end;
+  while (curr !== start && prev[curr]) {
+    finalPath.push(prev[curr]!);
+    curr = prev[curr]!.from;
+  }
+
+  const timeMs = performance.now() - startT;
+
+  return {
+    snapshots,
+    finalPath: finalPath.reverse(),
+    stats: { steps, visitedCount: visited.size, timeMs }
+  };
+}
+
+export function runBellmanFord(graph: Graph, start: string, end: string): AlgorithmResult {
+  const startT = performance.now();
+  const distances: Record<string, number> = {};
+  const prev: Record<string, Edge | null> = {};
+  const snapshots: Snapshot[] = [];
+
+  Object.keys(graph.nodes).forEach(id => (distances[id] = Infinity));
+  distances[start] = 0;
+  prev[start] = null;
+
+  const allNodes = Object.keys(graph.nodes);
+  const V = allNodes.length;
+  let steps = 0;
+
+  let activeNodes = new Set<string>([start]);
+
+  for (let i = 0; i < V - 1; i++) {
+    if (activeNodes.size === 0) break; // early stopping
+
+    const activeEdges: Edge[] = [];
+    const nextActiveNodes = new Set<string>();
+    const frontier = Array.from(activeNodes);
+
+    for (const u of frontier) {
+      for (const e of graph.edges[u]) {
+        const v = e.to;
+        activeEdges.push(e);
+        const alt = distances[u] + e.weight;
+        if (alt < distances[v]) {
+          distances[v] = alt;
+          prev[v] = e;
+          nextActiveNodes.add(v);
+        }
+      }
+    }
+    
+    steps++;
+    snapshots.push({
+      frontier,
+      visited: [], // Bellman-Ford doesn't strictly finalize nodes until the end
+      activeEdges,
+      distances: { ...distances }
+    });
+
+    activeNodes = nextActiveNodes;
+  }
+
+  const finalPath: Edge[] = [];
+  let curr = end;
+  while (curr !== start && prev[curr]) {
+    finalPath.push(prev[curr]!);
+    curr = prev[curr]!.from;
+  }
+
+  const timeMs = performance.now() - startT;
+
+  // Compute "visitedCount" based on nodes that were ever updated
+  const visitedCount = Object.keys(distances).filter(id => distances[id] != Infinity).length;
+
+  return {
+    snapshots,
+    finalPath: finalPath.reverse(),
+    stats: { steps, visitedCount, timeMs }
+  };
+}
+
 export type BoundingBox = {
   s: number;
   w: number;

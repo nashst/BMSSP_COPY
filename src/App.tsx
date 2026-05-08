@@ -20,6 +20,10 @@ import {
   fetchOSMGraph,
   runDijkstra, 
   runNewSSSP, 
+  runAStar,
+  runBFS,
+  runGBFS,
+  runBellmanFord,
   type Graph, 
   type AlgorithmResult,
   type TopologyType
@@ -101,6 +105,38 @@ export default function App() {
     'tl': 'top-8 left-8'
   };
 
+  // Theme Colors
+  let algoBase = activeAlgoName ? activeAlgoName.toLowerCase() : 'dijkstra';
+  let primaryColor = '#22d3ee'; // cyan default
+  let primaryColorDim = 'rgba(34,211,238,0.3)';
+  let primaryColorBright = '#a5f3fc';
+
+  if (algoBase.includes('dijkstra')) {
+    primaryColor = '#22d3ee'; // cyan
+    primaryColorDim = 'rgba(34,211,238,0.3)';
+    primaryColorBright = '#a5f3fc';
+  } else if (algoBase.includes('a*')) {
+    primaryColor = '#fbbf24'; // amber
+    primaryColorDim = 'rgba(251,191,36,0.3)';
+    primaryColorBright = '#fde68a';
+  } else if (algoBase.includes('breadth') || algoBase.includes('bfs')) {
+    primaryColor = '#60a5fa'; // blue
+    primaryColorDim = 'rgba(96,165,250,0.3)';
+    primaryColorBright = '#bfdbfe';
+  } else if (algoBase.includes('greedy')) {
+    primaryColor = '#f97316'; // orange
+    primaryColorDim = 'rgba(249,115,22,0.3)';
+    primaryColorBright = '#fed7aa';
+  } else if (algoBase.includes('bellman')) {
+    primaryColor = '#ef4444'; // red
+    primaryColorDim = 'rgba(239,68,68,0.3)';
+    primaryColorBright = '#fca5a5';
+  } else if (algoBase.includes('batch')) {
+    primaryColor = '#d946ef'; // fuchsia
+    primaryColorDim = 'rgba(217,70,239,0.3)';
+    primaryColorBright = '#f5d0fe';
+  }
+
   // Resize handling
   useEffect(() => {
     if (!containerRef.current) return;
@@ -167,7 +203,7 @@ export default function App() {
     }
   };
 
-  const runAlgorithm = (type: 'dijkstra' | 'new-sssp') => {
+  const runAlgorithm = (type: 'dijkstra' | 'new-sssp' | 'astar' | 'bfs' | 'gbfs' | 'bellman-ford') => {
     if (!graph || !startNode || !endNode) return;
     
     setIsPlaying(false);
@@ -176,10 +212,22 @@ export default function App() {
     let result: AlgorithmResult;
     if (type === 'dijkstra') {
       result = runDijkstra(graph, startNode, endNode);
-      setActiveAlgoName('Classic Dijkstra');
+      setActiveAlgoName('Dijkstra');
+    } else if (type === 'astar') {
+      result = runAStar(graph, startNode, endNode);
+      setActiveAlgoName('A* Search');
+    } else if (type === 'bfs') {
+      result = runBFS(graph, startNode, endNode);
+      setActiveAlgoName('Breadth-First Search');
+    } else if (type === 'gbfs') {
+      result = runGBFS(graph, startNode, endNode);
+      setActiveAlgoName('Greedy Best-First Search');
+    } else if (type === 'bellman-ford') {
+      result = runBellmanFord(graph, startNode, endNode);
+      setActiveAlgoName('Bellman-Ford');
     } else {
       result = runNewSSSP(graph, startNode, endNode);
-      setActiveAlgoName('2025 conceptual SSSP (Batching)');
+      setActiveAlgoName('Batch Relaxation SSSP');
     }
     
     setCurrentResult(result);
@@ -261,12 +309,6 @@ export default function App() {
       }
       return { x: node.x, y: node.y };
     };
-
-    // Theme Colors
-    const isDijkstra = !activeAlgoName || activeAlgoName.includes('Dijkstra');
-    const primaryColor = isDijkstra ? '#22d3ee' : '#d946ef'; // cyan or fuchsia
-    const primaryColorDim = isDijkstra ? 'rgba(34,211,238,0.3)' : 'rgba(217,70,239,0.3)';
-    const primaryColorBright = isDijkstra ? '#a5f3fc' : '#f5d0fe';
 
     // 1. Draw all default edges
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
@@ -394,7 +436,7 @@ export default function App() {
       ctx.fill();
     });
 
-  }, [graph, dimensions, currentResult, snapshotIdx, startNode, endNode, topology, mapInstance, mapTrigger]);
+  }, [graph, dimensions, currentResult, snapshotIdx, startNode, endNode, topology, mapInstance, mapTrigger, activeAlgoName]);
 
   return (
     <div className="bg-[#08080a] text-slate-200 h-screen w-full flex overflow-hidden font-sans select-none border-4 border-[#1a1a20]">
@@ -507,29 +549,65 @@ export default function App() {
           {/* Algorithm Toggles */}
           <div className="space-y-3">
             <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Execution Core</label>
-            <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => runAlgorithm('dijkstra')}
                 disabled={!startNode || !endNode}
-                className="w-full flex items-center justify-between p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400 group hover:bg-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className={`flex flex-col items-center justify-center p-3 rounded-lg text-xs font-bold uppercase tracking-widest transition-all
+                  ${activeAlgoName.includes('Dijkstra') ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
               >
-                <div className="text-left flex-col flex items-start">
-                  <div className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Play className="w-3 h-3" /> Traditional Dijkstra</div>
-                  <div className="text-[10px] opacity-60">Strict n log n Sorting</div>
-                </div>
-                <div className={`w-2 h-2 rounded-full bg-cyan-400 ${activeAlgoName.includes('Dijkstra') ? 'shadow-[0_0_12px_cyan] scale-150' : 'opacity-50'}`}></div>
+                Dijkstra
               </button>
-              
+
+              <button
+                onClick={() => runAlgorithm('astar')}
+                disabled={!startNode || !endNode}
+                className={`flex flex-col items-center justify-center p-3 rounded-lg text-xs font-bold uppercase tracking-widest transition-all
+                  ${activeAlgoName.includes('A*') ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_10px_rgba(251,191,36,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
+              >
+                A* Search
+              </button>
+
+              <button
+                onClick={() => runAlgorithm('bfs')}
+                disabled={!startNode || !endNode}
+                className={`flex flex-col items-center justify-center p-3 rounded-lg text-xs font-bold uppercase tracking-widest transition-all
+                  ${activeAlgoName.includes('Breadth') ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50 shadow-[0_0_10px_rgba(96,165,250,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
+              >
+                BFS
+              </button>
+
+              <button
+                onClick={() => runAlgorithm('gbfs')}
+                disabled={!startNode || !endNode}
+                className={`flex flex-col items-center justify-center p-3 text-center rounded-lg text-[10px] uppercase font-bold tracking-widest transition-all
+                  ${activeAlgoName.includes('Greedy') ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50 shadow-[0_0_10px_rgba(249,115,22,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
+              >
+                GBFS
+              </button>
+
+              <button
+                onClick={() => runAlgorithm('bellman-ford')}
+                disabled={!startNode || !endNode}
+                className={`flex flex-col items-center justify-center p-3 text-center rounded-lg text-[10px] uppercase font-bold tracking-widest transition-all
+                  ${activeAlgoName.includes('Bellman') ? 'bg-red-500/20 text-red-400 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
+              >
+                Bellman-Ford
+              </button>
+
               <button
                 onClick={() => runAlgorithm('new-sssp')}
                 disabled={!startNode || !endNode}
-                className="w-full flex items-center justify-between p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl text-fuchsia-400 hover:bg-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className={`flex flex-col items-center justify-center p-3 text-center rounded-lg text-[10px] uppercase font-bold tracking-widest transition-all
+                  ${activeAlgoName.includes('Batch') ? 'bg-fuchsia-500/20 text-fuchsia-400 border border-fuchsia-500/50 shadow-[0_0_10px_rgba(217,70,239,0.3)]' : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'} disabled:opacity-50
+                `}
               >
-                <div className="text-left flex-col flex items-start">
-                  <div className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Zap className="w-3 h-3" /> Batch Relaxation</div>
-                  <div className="text-[10px] opacity-60">2025 Sorting-Barrier Breaker</div>
-                </div>
-                <div className={`w-2 h-2 rounded-full bg-fuchsia-400 ${activeAlgoName.includes('Batching') ? 'shadow-[0_0_12px_fuchsia] scale-150' : 'opacity-50'}`}></div>
+                Batch SSSP
               </button>
             </div>
           </div>
@@ -653,14 +731,23 @@ export default function App() {
         {/* Stats Overlay */}
         {currentResult && (
           <div className={`absolute ${hudClasses[hudPos]} flex gap-4 pointer-events-none transition-all duration-700 ease-in-out z-20`}>
-            <div className={`bg-[#0c0c12]/95 border p-5 rounded-2xl w-56 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.6)] ${activeAlgoName.includes('Dijkstra') ? 'ring-1 ring-cyan-500/50 border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.15)]' : 'ring-1 ring-fuchsia-500/50 border-fuchsia-500/20 shadow-[0_0_15px_rgba(217,70,239,0.15)]'}`}>
-              <div className={`text-[10px] ${activeAlgoName.includes('Dijkstra') ? 'text-cyan-400 border-cyan-500/20' : 'text-fuchsia-400 border-fuchsia-500/20'} font-black uppercase mb-3 border-b pb-2`}>
-                {activeAlgoName} Pipeline
+            <div 
+              className={`bg-[#0c0c12]/95 border p-5 rounded-2xl w-56 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.6)]`}
+              style={{
+                borderColor: primaryColorDim,
+                boxShadow: `0 0 15px ${primaryColorDim}`
+              }}
+            >
+              <div 
+                className={`text-[10px] font-black uppercase mb-3 border-b pb-2`}
+                style={{ color: primaryColor, borderBottomColor: primaryColorDim }}
+              >
+                {activeAlgoName}
               </div>
               <div className="space-y-4">
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Execution Steps</div>
-                  <div className={`text-xl font-mono ${activeAlgoName.includes('Dijkstra') ? 'text-cyan-500' : 'text-fuchsia-500'}`}>
+                  <div className={`text-xl font-mono`} style={{ color: primaryColor }}>
                     {snapshotIdx < currentResult.snapshots.length - 1 ? snapshotIdx : currentResult.stats.steps}
                   </div>
                 </div>
