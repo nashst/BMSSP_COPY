@@ -1,18 +1,25 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { 
   Play, 
+  Pause,
   Zap, 
   Shuffle, 
   MapPin, 
   Flag,
-  Info 
+  Info,
+  Grid3X3,
+  Globe,
+  Route,
+  FastForward,
+  Rewind
 } from 'lucide-react';
 import { 
   generateGraph, 
   runDijkstra, 
   runNewSSSP, 
   type Graph, 
-  type AlgorithmResult 
+  type AlgorithmResult,
+  type TopologyType
 } from './lib/graph';
 
 export default function App() {
@@ -22,6 +29,7 @@ export default function App() {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [startNode, setStartNode] = useState<string | null>(null);
   const [endNode, setEndNode] = useState<string | null>(null);
+  const [topology, setTopology] = useState<TopologyType>('random');
   
   const [mode, setMode] = useState<'idle' | 'selectStart' | 'selectEnd'>('idle');
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -30,6 +38,41 @@ export default function App() {
   const [activeAlgoName, setActiveAlgoName] = useState<string>('');
   const [snapshotIdx, setSnapshotIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(40);
+
+  const [hudPos, setHudPos] = useState<'br' | 'bl' | 'tr' | 'tl'>('br');
+
+  // Dynamic positioning for HUD
+  useEffect(() => {
+    if (!graph || !endNode || !graph.nodes[endNode]) {
+      setHudPos('br');
+      return;
+    }
+    const nodesToAvoid = [graph.nodes[endNode]];
+    if (startNode && graph.nodes[startNode]) nodesToAvoid.push(graph.nodes[startNode]);
+
+    const isBlocked = (pos: 'br'|'bl'|'tr'|'tl') => {
+      return nodesToAvoid.some(n => {
+        if (pos === 'br') return n.x > dimensions.width / 2 && n.y > dimensions.height / 2;
+        if (pos === 'bl') return n.x < dimensions.width / 2 && n.y > dimensions.height / 2;
+        if (pos === 'tr') return n.x > dimensions.width / 2 && n.y < dimensions.height / 2;
+        if (pos === 'tl') return n.x < dimensions.width / 2 && n.y < dimensions.height / 2;
+        return false;
+      });
+    };
+
+    if (!isBlocked('br')) setHudPos('br');
+    else if (!isBlocked('bl')) setHudPos('bl');
+    else if (!isBlocked('tr')) setHudPos('tr');
+    else setHudPos('tl');
+  }, [graph, startNode, endNode, dimensions]);
+
+  const hudClasses = {
+    'br': 'bottom-8 right-8',
+    'bl': 'bottom-8 left-8',
+    'tr': 'top-24 right-8',
+    'tl': 'top-8 left-8'
+  };
 
   // Resize handling
   useEffect(() => {
@@ -49,26 +92,24 @@ export default function App() {
   // Initialization
   useEffect(() => {
     if (graph === null && dimensions.width > 0 && dimensions.height > 0) {
-      // Give dimensions a tiny delay to settle on mount
       setTimeout(() => {
-        handleGenerateGraph();
+        handleGenerateGraph(topology);
       }, 100);
     }
   }, [dimensions.width, dimensions.height]);
 
-  const handleGenerateGraph = () => {
+  const handleGenerateGraph = (t: TopologyType) => {
+    setTopology(t);
     setIsPlaying(false);
     setCurrentResult(null);
     setSnapshotIdx(0);
-    const newGraph = generateGraph(dimensions.width, dimensions.height, 200);
+    const newGraph = generateGraph(dimensions.width, dimensions.height, t === 'random' ? 200 : 800, t);
     setGraph(newGraph);
     
     // Auto-select far separated start and end nodes
-    const nodeVals = Object.values(newGraph.nodes);
+    let nodeVals = Object.values(newGraph.nodes);
     if(nodeVals.length > 2) {
-      // Start is the most top-left
       const start = [...nodeVals].sort((a,b) => (a.x + a.y) - (b.x + b.y))[0].id;
-      // End is the most bottom-right
       const end = [...nodeVals].sort((a,b) => (b.x + b.y) - (a.x + a.y))[0].id;
       setStartNode(start);
       setEndNode(end);
@@ -108,9 +149,9 @@ export default function App() {
         }
         return prev + 1;
       });
-    }, 40); // Playback speed
+    }, playbackSpeed);
     return () => clearInterval(timer);
-  }, [isPlaying, currentResult]);
+  }, [isPlaying, currentResult, playbackSpeed]);
 
   // Click on Canvas to Select Nodes
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -169,6 +210,7 @@ export default function App() {
     const drawnPairs = new Set();
     Object.values(graph.edges).forEach((edgeList: any) => {
       edgeList.forEach((e: any) => {
+        if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
         const pairKey = [e.from, e.to].sort().join('-');
         if (!drawnPairs.has(pairKey)) {
           ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
@@ -201,6 +243,7 @@ export default function App() {
       ctx.beginPath();
       Object.values(graph.edges).forEach((edgeList: any) => {
         edgeList.forEach((e: any) => {
+          if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
           if (visitedSet.has(e.from) && visitedSet.has(e.to)) {
             ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
             ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
@@ -215,6 +258,7 @@ export default function App() {
         ctx.lineWidth = 2.5;
         ctx.beginPath();
         snapshot.activeEdges.forEach(e => {
+          if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
           ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
           ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
         });
@@ -233,6 +277,7 @@ export default function App() {
       ctx.shadowColor = primaryColor;
       
       currentResult.finalPath.forEach(e => {
+        if (!graph.nodes[e.from] || !graph.nodes[e.to]) return;
         ctx.moveTo(graph.nodes[e.from].x, graph.nodes[e.from].y);
         ctx.lineTo(graph.nodes[e.to].x, graph.nodes[e.to].y);
       });
@@ -278,40 +323,85 @@ export default function App() {
     <div className="bg-[#08080a] text-slate-200 h-screen w-full flex overflow-hidden font-sans select-none border-4 border-[#1a1a20]">
       
       {/* Control Sidebar */}
-      <aside className="w-80 border-r border-slate-800 bg-[#0c0c12]/80 backdrop-blur-md flex flex-col p-6 shrink-0 z-10 overflow-y-auto">
-        <div className="mb-8">
+      <aside className="w-[380px] border-r border-[#1a1a20] bg-[#0c0c12]/95 backdrop-blur-xl flex flex-col p-6 shrink-0 z-10 overflow-y-auto shadow-[4px_0_24px_rgba(0,0,0,0.5)]">
+        <div className="mb-6">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-3 h-3 bg-cyan-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,211,238,0.8)]"></div>
-            <h1 className="text-xl font-black tracking-tighter uppercase italic">AlgoStorm v2.5</h1>
+            <h1 className="text-xl font-black tracking-tighter uppercase italic text-white flex items-center gap-2">AlgoStorm <span className="text-xs text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded border border-cyan-400/20">v3.0</span></h1>
           </div>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest leading-relaxed">Shortest Path Visualization Terminal<br/>Sorting Barrier Research PoC</p>
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest leading-relaxed">Shortest Path Visualization Terminal<br/>Advanced Analysis Modules Active</p>
         </div>
 
         <div className="space-y-6 flex-1">
-          {/* Input Section */}
+          {/* Topology Selection */}
           <div className="space-y-3">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Network Parameters</label>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Network Topology</label>
+              <button 
+                onClick={() => handleGenerateGraph(topology)}
+                className="text-[10px] text-cyan-500 hover:text-cyan-400 uppercase tracking-widest font-bold flex items-center gap-1"
+              >
+                <Shuffle className="w-3 h-3" /> Regenerate
+              </button>
+            </div>
             
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => handleGenerateGraph('random')}
+                className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                  topology === 'random' 
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
+                  : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                }`}
+              >
+                <Globe className="w-4 h-4 mb-1" /> Mesh
+              </button>
+              <button
+                onClick={() => handleGenerateGraph('grid')}
+                className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                  topology === 'grid' 
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
+                  : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                }`}
+              >
+                <Grid3X3 className="w-4 h-4 mb-1" /> Grid
+              </button>
+              <button
+                onClick={() => handleGenerateGraph('maze')}
+                className={`flex flex-col items-center justify-center gap-2 py-3 rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors ${
+                  topology === 'maze' 
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 shadow-[0_0_10px_rgba(34,211,238,0.2)]' 
+                  : 'bg-slate-900/50 border border-slate-800 text-slate-500 hover:border-slate-600 hover:text-slate-300'
+                }`}
+              >
+                <Route className="w-4 h-4 mb-1" /> Maze
+              </button>
+            </div>
+          </div>
+
+          {/* Node Placement */}
+          <div className="space-y-3">
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Mission Coordinates</label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setMode('selectStart')}
-                className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                className={`flex items-center justify-center gap-1 px-2 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors ${
                   mode === 'selectStart' 
                   ? 'bg-green-500/20 text-green-400 border border-green-500/50' 
                   : 'bg-slate-900/50 border border-slate-800 text-slate-400 hover:border-slate-600'
                 }`}
               >
-                <MapPin className="w-3 h-3" /> Set Start
+                <MapPin className="w-3 h-3" /> Exfil (Start)
               </button>
               <button
                 onClick={() => setMode('selectEnd')}
-                className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                className={`flex items-center justify-center gap-1 px-2 py-3 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors ${
                   mode === 'selectEnd' 
                   ? 'bg-red-500/20 text-red-400 border border-red-500/50' 
                   : 'bg-slate-900/50 border border-slate-800 text-slate-400 hover:border-slate-600'
                 }`}
               >
-                <Flag className="w-3 h-3" /> Set End
+                <Flag className="w-3 h-3" /> Target (End)
               </button>
             </div>
             {mode !== 'idle' && (
@@ -323,45 +413,101 @@ export default function App() {
           </div>
 
           {/* Algorithm Toggles */}
-          <div className="space-y-3 pt-2">
+          <div className="space-y-3">
             <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Execution Core</label>
             <div className="space-y-2">
               <button
                 onClick={() => runAlgorithm('dijkstra')}
-                disabled={!startNode || !endNode || isPlaying}
-                className="w-full flex items-center justify-between p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400 group hover:bg-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!startNode || !endNode}
+                className="w-full flex items-center justify-between p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400 group hover:bg-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 <div className="text-left flex-col flex items-start">
                   <div className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Play className="w-3 h-3" /> Traditional Dijkstra</div>
                   <div className="text-[10px] opacity-60">Strict n log n Sorting</div>
                 </div>
-                <div className={`w-2 h-2 rounded-full bg-cyan-400 ${isPlaying && activeAlgoName.includes('Dijkstra') ? 'shadow-[0_0_8px_cyan]' : ''}`}></div>
+                <div className={`w-2 h-2 rounded-full bg-cyan-400 ${activeAlgoName.includes('Dijkstra') ? 'shadow-[0_0_12px_cyan] scale-150' : 'opacity-50'}`}></div>
               </button>
               
               <button
                 onClick={() => runAlgorithm('new-sssp')}
-                disabled={!startNode || !endNode || isPlaying}
-                className="w-full flex items-center justify-between p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl text-fuchsia-400 hover:bg-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!startNode || !endNode}
+                className="w-full flex items-center justify-between p-4 bg-fuchsia-500/10 border border-fuchsia-500/30 rounded-xl text-fuchsia-400 hover:bg-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 <div className="text-left flex-col flex items-start">
                   <div className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Zap className="w-3 h-3" /> Batch Relaxation</div>
                   <div className="text-[10px] opacity-60">2025 Sorting-Barrier Breaker</div>
                 </div>
-                <div className={`w-2 h-2 rounded-full bg-fuchsia-400 ${isPlaying && activeAlgoName.includes('Batching') ? 'shadow-[0_0_8px_fuchsia]' : ''}`}></div>
+                <div className={`w-2 h-2 rounded-full bg-fuchsia-400 ${activeAlgoName.includes('Batching') ? 'shadow-[0_0_12px_fuchsia] scale-150' : 'opacity-50'}`}></div>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Simulation CTA */}
-        <div className="pt-6 border-t border-slate-800">
-           <button
-             onClick={handleGenerateGraph}
-             className="w-full mt-3 py-2 text-slate-500 text-[10px] uppercase font-bold tracking-widest hover:text-slate-300 transition-colors flex items-center justify-center gap-2"
-           >
-             <Shuffle className="w-3 h-3" />
-             Reset Graph Topology
-           </button>
+        {/* Playback Controls */}
+        <div className="pt-6 border-t border-[#1a1a20] space-y-4">
+           {currentResult ? (
+             <>
+                <div>
+                  <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-2">
+                    <span>Timeline</span>
+                    <span className="text-slate-300">{snapshotIdx} / {currentResult.snapshots.length - 1}</span>
+                  </div>
+                  <input 
+                    type="range"
+                    disabled={isPlaying}
+                    min={0}
+                    max={currentResult.snapshots.length - 1}
+                    value={snapshotIdx}
+                    onChange={(e) => setSnapshotIdx(parseInt(e.target.value))}
+                    className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between bg-slate-900/50 border border-[#1a1a20] rounded-xl p-2">
+                  <button 
+                    onClick={() => setSnapshotIdx(Math.max(0, snapshotIdx - 1))}
+                    disabled={isPlaying || snapshotIdx <= 0}
+                    className="p-2 text-slate-400 hover:text-white disabled:opacity-30"
+                  >
+                    <Rewind className="w-4 h-4" />
+                  </button>
+                  
+                  <button 
+                    onClick={() => setIsPlaying(!isPlaying)}
+                    disabled={snapshotIdx >= currentResult.snapshots.length - 1 && !isPlaying}
+                    className="w-10 h-10 flex items-center justify-center bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-full disabled:opacity-30 disabled:hover:bg-cyan-500"
+                  >
+                    {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current translate-x-0.5" />}
+                  </button>
+                  
+                  <button 
+                    onClick={() => setSnapshotIdx(Math.min(currentResult.snapshots.length - 1, snapshotIdx + 1))}
+                    disabled={isPlaying || snapshotIdx >= currentResult.snapshots.length - 1}
+                    className="p-2 text-slate-400 hover:text-white disabled:opacity-30"
+                  >
+                    <FastForward className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                   <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Speed</span>
+                   <input 
+                      type="range"
+                      min={10}
+                      max={150}
+                      step={10}
+                      value={160 - playbackSpeed} // Invert so right is faster 
+                      onChange={(e) => setPlaybackSpeed(160 - parseInt(e.target.value))}
+                      className="flex-1 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-fuchsia-500"
+                   />
+                </div>
+             </>
+           ) : (
+             <div className="text-center p-6 border border-dashed border-slate-800 rounded-xl">
+               <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Waiting for Execution</div>
+               <div className="text-xs text-slate-600 mt-1">Select graph parameters and run to interact with timeline.</div>
+             </div>
+           )}
         </div>
       </aside>
 
@@ -390,8 +536,8 @@ export default function App() {
 
         {/* Stats Overlay */}
         {currentResult && (
-          <div className="absolute bottom-8 right-8 flex gap-4 pointer-events-none">
-            <div className={`bg-slate-900/90 border border-slate-700 p-5 rounded-2xl w-56 backdrop-blur-xl ${activeAlgoName.includes('Dijkstra') ? 'ring-2 ring-cyan-500/30' : 'ring-2 ring-fuchsia-500/30'}`}>
+          <div className={`absolute ${hudClasses[hudPos]} flex gap-4 pointer-events-none transition-all duration-700 ease-in-out z-20`}>
+            <div className={`bg-[#0c0c12]/95 border p-5 rounded-2xl w-56 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.6)] ${activeAlgoName.includes('Dijkstra') ? 'ring-1 ring-cyan-500/50 border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.15)]' : 'ring-1 ring-fuchsia-500/50 border-fuchsia-500/20 shadow-[0_0_15px_rgba(217,70,239,0.15)]'}`}>
               <div className={`text-[10px] ${activeAlgoName.includes('Dijkstra') ? 'text-cyan-400 border-cyan-500/20' : 'text-fuchsia-400 border-fuchsia-500/20'} font-black uppercase mb-3 border-b pb-2`}>
                 {activeAlgoName} Pipeline
               </div>
