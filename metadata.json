@@ -1,0 +1,6 @@
+{
+  "name": "SSSP Algorithm Barrier Visualizer",
+  "description": "Visualizes the difference between classic Strict O(n log n) Dijkstra and the 2025 new batch-relaxation SSSP conceptual algorithm.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
