@@ -13,7 +13,9 @@ import {
   FastForward,
   Map as MapIcon,
   Loader2,
-  Rewind
+  Rewind,
+  Video,
+  Square
 } from 'lucide-react';
 import { 
   generateGraph, 
@@ -66,6 +68,10 @@ export default function App() {
   
   const [mapInstance, setMapInstance] = useState<any>(null);
   const [mapTrigger, setMapTrigger] = useState(0);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
 
   const handleMapMove = () => {
     setMapTrigger(v => v + 1);
@@ -239,17 +245,77 @@ export default function App() {
   // Animation Loop
   useEffect(() => {
     if (!isPlaying || !currentResult) return;
+    
+    if (snapshotIdx >= currentResult.snapshots.length - 1) {
+      setIsPlaying(false);
+      // STOP recording if active
+      if (isRecording && mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      return;
+    }
+
     const timer = setInterval(() => {
       setSnapshotIdx(prev => {
-        if (prev >= currentResult.snapshots.length - 1) {
+        const next = prev + 1;
+        if (next >= currentResult.snapshots.length - 1) {
           setIsPlaying(false);
-          return prev;
+          // STOP recording if active
+          if (isRecording && mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+          }
         }
-        return prev + 1;
+        return Math.min(next, currentResult.snapshots.length - 1);
       });
     }, playbackSpeed);
     return () => clearInterval(timer);
-  }, [isPlaying, currentResult, playbackSpeed]);
+  }, [isPlaying, snapshotIdx, currentResult, playbackSpeed, isRecording]);
+
+  const exportAnimation = () => {
+    if (!graph || !currentResult || !canvasRef.current) return;
+    
+    setSnapshotIdx(0);
+    setIsPlaying(false);
+
+    // capture stream
+    const stream = canvasRef.current.captureStream(30);
+    
+    // Some browsers prefer webm or mp4
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 
+                     MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 
+                     MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : '';
+    
+    const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    mr.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: mimeType || 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeAlgoName.replace(/\s+/g, '_')}_animation.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setIsRecording(false);
+    };
+
+    chunksRef.current = [];
+    mediaRecorderRef.current = mr;
+    mr.start(100); // 100ms chunks to ensure data starts flowing
+    setIsRecording(true);
+    
+    // start playback immediately after starting
+    setTimeout(() => {
+      setIsPlaying(true);
+    }, 50);
+  };
+
+  const stopRecordingEarly = () => {
+    if (isRecording && mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  };
 
   // Click on Canvas to Select Nodes
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -670,6 +736,19 @@ export default function App() {
                       onChange={(e) => setPlaybackSpeed(160 - parseInt(e.target.value))}
                       className="flex-1 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-fuchsia-500"
                    />
+                </div>
+                
+                <div className="pt-2">
+                  <button
+                    onClick={isRecording ? stopRecordingEarly : exportAnimation}
+                    disabled={(!currentResult || isPlaying) && !isRecording}
+                    className={`w-full py-3 rounded-lg font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${
+                      isRecording ? 'bg-red-500/20 text-red-400 border border-red-500/50 animate-pulse' : 'bg-slate-900/50 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-white'
+                    }`}
+                  >
+                    {isRecording ? <Square className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                    {isRecording ? 'Recording...' : 'Export WebM Video'}
+                  </button>
                 </div>
              </>
            ) : (
